@@ -1,4 +1,5 @@
-import { create } from "zustand";
+// import { create } from "zustand";
+import { create } from "../mini-zustand/react";
 
 interface BearState {
   bears: number;

@@ -4,12 +4,15 @@ zustand 是狀態管理庫，是可以排除 react 單獨使用的。
 redux, mobX 要搭配 react-redux, mobx-react 才能在 react 當中使用。
 recoil 則是 react 狀態管理庫，無法單獨使用。
 
-所以基本的文檔架構是：
+redux 建立在 MVC 架構上，View 和 Model 獨立，把 dispatch action 作為 controller 。定義了資料流的方向。
+但 zustand 簡化了 controller，還是遵循著單向資料流。
+
+基本的文檔架構是：
 
 - mini-zustand
   - index
-  - react: 使用 `create`，結合 hooks
-  - vanilla: 使用 `createStore`
+  - react: 和 react 做連結
+  - vanilla: 建立狀態倉庫，包含訂閱和取消訂閱，很類似 redux
 
 ## 基本使用
 
@@ -41,6 +44,37 @@ const useBearStore = create<BearState>((set) => ({
 
 export default useBearStore;
 ```
+
+另外補充，在[官網中的 TypeScript Usage 章節](https://www.npmjs.com/package/zustand#typescript-usage) 有提到：
+
+Basic typescript usage doesn't require anything special except for writing `create<State>()(...)` instead of `create(...)...`
+
+```ts
+import { create } from "zustand";
+import { devtools, persist } from "zustand/middleware";
+import type {} from "@redux-devtools/extension"; // required for devtools typing
+
+interface BearState {
+  bears: number;
+  increase: (by: number) => void;
+}
+
+const useBearStore = create<BearState>()(
+  devtools(
+    persist(
+      (set) => ({
+        bears: 0,
+        increase: (by) => set((state) => ({ bears: state.bears + by })),
+      }),
+      {
+        name: "bear-storage",
+      }
+    )
+  )
+);
+```
+
+`create` 如果沒有參數執行，會柯里化返回另一個創建狀態庫的函式。如果使用中間件並且更符合設計的話，應該要這樣寫 `create<BearState>()(...)`
 
 > src/pages/BearsPage.tsx
 
@@ -83,6 +117,8 @@ const useBoundStore = (selector) => useStore(vanillaStore, selector)
 
 ### vanilla - createStore
 
+建立狀態倉庫，包含訂閱和取消訂閱，很類似 redux
+
 - 參數: 接受函式作為參數，並且此函式還有 set 和 get 作為參數。
 - 回傳值: 有 `{ getState, setState, subscribe, destory }` 等方法。
 
@@ -100,6 +136,7 @@ interface StoreApi<T> {
   subscribe: (listener: (state: T, prevState: T) => void) => () => void;
   // 取消訂閱的函式
   destory: () => void;
+  getInitialState: () => T;
 }
 
 // 參數為函式，函式內的參數：
@@ -110,7 +147,7 @@ export type StateCreator<T> = (
 ) => T;
 ```
 
-定義 `createStore`， 基本是這樣使用：`const store = createStore((set) => ...)`，又或者是回傳 `createStoreImpl` 也就是回傳建立狀態庫的函式，供使用者在之後創建。
+定義 `createStore`， 基本是這樣使用：`const store = createStore((set) => ...)`，又或者是柯里化回傳建立狀態庫的函式 `createStoreImpl` ，供使用者在之後創建。
 
 ```ts
 // 「重載簽名」寫法
@@ -182,7 +219,7 @@ const destory: StoreApi<Tstate>["destory"] = () => {
 };
 ```
 
-接著是 `setState`，可以局部更新，或是取代更新：
+接著是 `setState`，可以局部更新，或是取代更新。這也是跟 redux 不同的地方！
 
 ```ts
 const setState: StoreApi<Tstate>["setState"] = (partial, replace) => {
@@ -200,4 +237,75 @@ const setState: StoreApi<Tstate>["setState"] = (partial, replace) => {
     listeners.forEach((l) => l(state, prevState));
   }
 };
+```
+
+建立好狀態倉庫後，要和 react 做連結。
+
+### react - 實現 create
+
+必須使用到 hooks - `useSyncExternalStore` 放入訂閱狀態庫和取得狀態庫。所以會執行上面的 `createStore` 函式。
+而這個 `create` 也可能是需要安插中間件的，所以可單獨執行。
+`create()` 返回值依然是函式，可以給使用者執行後，建立狀態倉庫。
+
+```ts
+import { StateCreator, StoreApi } from "zustand";
+import { createStore } from "./vanilla";
+import { useSyncExternalStore } from "react";
+
+type Create = {
+  <T>(createState: StateCreator<T>): UseBoundStore<StoreApi<T>>;
+  <T>(): (createState: StateCreator<T>) => UseBoundStore<StoreApi<T>>;
+};
+
+// infer 能從類型結構中推導出部分類型信息，在實現泛型工具類型（如提取函數返回類型、提取 Promise 結果類型等）時非常有用。
+// 這裡的 infer T 的作用是從 S 的結構中提取出 getState 方法返回的類型，並將其賦值給 T
+type ExtractState<S> = S extends {
+  getState: () => infer T;
+}
+  ? T
+  : never; // 不可能發生的情況
+
+// 取得 "getState" | "subscribe" 方法
+type ReadonlyStoreApi<T> = Pick<StoreApi<T>, "getState" | "subscribe">;
+// 加入 getServerState 方法
+type WithReact<S extends ReadonlyStoreApi<unknown>> = S & {
+  getServerState?: () => ExtractState<S>;
+};
+
+// 可以直接返回狀態或是一個選擇器函數來返回部分狀態
+export type UseBoundStore<S extends WithReact<ReadonlyStoreApi<unknown>>> = {
+  (): ExtractState<S>; // 直接返回 store.getState() 整個狀態
+  <U>(
+    selector: (state: ExtractState<S>) => U, // 接受一個選擇器函數，從狀態中提取特定數據
+    equals?: (a: U, b: U) => boolean
+  ): U; // 返回選擇器提取的部分狀態
+} & S; // 把 S 的屬性混入 UseBoundStore
+// 這樣，UseBoundStore 不僅是一個函數，它還擁有 S 的所有屬性。
+// 例如，S 本身可能包含一些方法（如 getState、setState 等），這些方法會被直接附加到 UseBoundStore 上。
+
+// 可以想見 `createImpl` 就是執行 `createStore` 函式。
+export const create = function <T>(createState: StateCreator<T>) {
+  return createState ? createImpl(createState) : createImpl;
+} as Create;
+
+function createImpl<T>(createState: StateCreator<T>) {
+  const api =
+    typeof createState === "function" ? createStore(createState) : createState;
+
+  // 連接上 react
+  const useBoundStore = (selector?: any) => useStore(api, selector);
+  return useBoundStore;
+}
+
+function useStore<Tstate, StateSlice>(
+  api: WithReact<StoreApi<Tstate>>,
+  selector: (state: Tstate) => StateSlice = api.getState as any
+) {
+  const slice = useSyncExternalStore(
+    api.subscribe,
+    api.getState,
+    api.getServerState
+  );
+  return selector(slice);
+}
 ```

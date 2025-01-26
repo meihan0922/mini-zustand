@@ -33,9 +33,11 @@ type CreateStoreImpl = <T>(createImpl: StateCreator<T>) => StoreApi<T>;
  * type CreateStoreImpl1<T> = (createImpl: StateCreator<T>) => StoreApi<T>;
  * 在使用 CreateStoreImpl1 時都要明確定義才行，很麻煩
  * const createStore: CreateStoreImpl1<{ count: number }> = (createImpl) => {
-  return { getState: () => createImpl(() => {}) }; // 簡化實現
-};
-
+ *  return { getState: () => createImpl(() => {}) }; // 簡化實現
+ * };
+ * const createStore: CreateStoreImpl = (createImpl) => {
+ *  return { getState: () => createImpl(() => {}) }; // 自動推導
+ * };
  */
 
 export const createStore = (<T>(createState: StateCreator<T>) => {
