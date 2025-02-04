@@ -1,6 +1,7 @@
 import { StateCreator, StoreApi } from "zustand";
 import { createStore } from "./vanilla";
-import { useSyncExternalStore } from "react";
+import useSyncExternalStoreExports from "use-sync-external-store/shim/with-selector";
+const { useSyncExternalStoreWithSelector } = useSyncExternalStoreExports;
 
 type Create = {
   <T>(createState: StateCreator<T>): UseBoundStore<StoreApi<T>>;
@@ -48,12 +49,15 @@ function createImpl<T>(createState: StateCreator<T>) {
 
 function useStore<Tstate, StateSlice>(
   api: WithReact<StoreApi<Tstate>>,
-  selector: (state: Tstate) => StateSlice = api.getState as any
+  selector: (state: Tstate) => StateSlice = api.getState as any,
+  equalityFn?: (a: StateSlice, b: StateSlice) => boolean
 ) {
-  const slice = useSyncExternalStore(
+  const slice = useSyncExternalStoreWithSelector(
     api.subscribe,
     api.getState,
-    api.getServerState
+    api.getServerState || api.getState,
+    selector,
+    equalityFn
   );
-  return selector(slice);
+  return slice;
 }

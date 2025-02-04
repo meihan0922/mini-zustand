@@ -1,11 +1,12 @@
 # mini-zustand
 
-zustand 是狀態管理庫，是可以排除 react 單獨使用的。
-redux, mobX 要搭配 react-redux, mobx-react 才能在 react 當中使用。
-recoil 則是 react 狀態管理庫，無法單獨使用。
+- zustand 是狀態管理庫，是可以排除 react 單獨使用的。
+  - 需要額外搭配套件：redux - react-redux, mobX - mobx-react 才能在 react 當中使用。
+  - recoil 則是 react 狀態管理庫，無法單獨使用。
+- 相較於 redux
 
-redux 建立在 MVC 架構上，View 和 Model 獨立，把 dispatch action 作為 controller 。定義了資料流的方向。
-但 zustand 簡化了 controller，還是遵循著單向資料流。
+  1. redux 建立在 MVC 架構上，View 和 Model 獨立，把 dispatch action 作為 controller 。定義了資料流的方向。但 zustand 簡化了 controller，還是遵循著單向資料流。
+  2. 效能問題: 在狀態更新過程中，Redux 可能導致不必要的重新渲染，這在大型應用中會成為性能瓶頸。
 
 基本的文檔架構是：
 
@@ -101,16 +102,44 @@ export default function BearsPage() {
 ```ts
 import { createStore } from 'zustand/vanilla'
 
-const store = createStore((set) => ...)
+const vanillaStore = createStore((set) => ...)
 const { getState, setState, subscribe, getInitialState } = store
 
-export default store
+export  { vanillaStore };
+```
 
+```ts
 // 使用
-import { useStore } from 'zustand'
-import { vanillaStore } from './vanillaStore'
+import { useStore } from "zustand";
+import { vanillaStore } from "./vanillaStore";
 
-const useBoundStore = (selector) => useStore(vanillaStore, selector)
+const useBoundStore = (selector) => useStore(vanillaStore, selector);
+```
+
+### Slice Pattern
+
+切片的使用可以使狀態管理模組化，更便於組織和擴張。
+
+```ts
+import { create } from "zustand";
+
+const createBearSlice = (set) => ({
+  bears: 0,
+  increase: (by = 1) => set((state) => ({ bears: state.bears + by })),
+  decrease: (by = 1) => set((state) => ({ bears: state.bears - by })),
+  reset: () => set({ bears: 0 }),
+});
+const createCountSlice = (set) => ({
+  count: 100,
+  increaseCount: () => set((state) => ({ count: state.count + 1 })),
+});
+
+const useBoundStore = create<BearState>((...params) => ({
+  ...createBearSlice(...params),
+  ...createCountSlice(...params),
+}));
+
+export default useBoundStore;
 ```
 
 ## 實現
@@ -308,4 +337,42 @@ function useStore<Tstate, StateSlice>(
   );
   return selector(slice);
 }
+```
+
+#### selector 與 equalityFn
+
+實際使用時，是加入 selector，
+
+```ts
+const bears = useBearStore((state) => state.bears);
+// 相較於，下方不會優化 阻止渲染
+const store = useBearStore();
+const { bears } = store;
+```
+
+在源碼當中，`useStore` 其實是使用 `useSyncExternalStoreWithSelector` 來處理 `useStore`，他是基於
+`useSyncExternalStore` 再封裝，處理 redux 和 zustand 的 selector 模式，
+使用 `selector` 取得對應的狀態，並且訂閱狀態，緩存前值，如果有改變就呼叫 `subscribe`。
+一開始源碼是寫 `useLayoutEffect` `useEffect` 需要去緩存 selector。
+`useSyncExternalStore` 字面上雖然是寫 Sync ，但實際在是 HookPassive 的 flags，是非同步的執行，但“同步的更新”！
+
+```ts
+const snapshot = useSyncExternalStoreWithSelector(
+  subscribe,
+  getSnapshot, // getState
+  getServerSnapshot, // getServerState
+  selector, // useSelector 的第一個參數，取得狀態
+  isEqual?, // useSelector 的第二個參數，用來判斷 selector 取得的狀態是否有改變
+)
+```
+
+```ts
+const bears = useBearStore(
+  (state) => state.bears, // 第一個參數，取得狀態
+  (a, b) => {
+    // a, b 分別是新的 bears 和舊的 bears
+    // 回傳是否一樣，來觸發 subscribe
+    return true;
+  } // 第二個參數，用來判斷 selector 取得的狀態是否有改變
+);
 ```
