@@ -119,6 +119,8 @@ const useBoundStore = (selector) => useStore(vanillaStore, selector);
 ### Slice Pattern
 
 切片的使用可以使狀態管理模組化，更便於組織和擴張。
+如果狀態間，彼此是緊密相關的狀態，需要頻繁交互就使用切片模式。
+不然拆分成獨立檔案，個別呼叫 create 建立獨立的 store 更好維護。缺點是如果彼此相關，需要手動 `getState()` 或是 `subscribe` 來同步狀態。
 
 ```ts
 import { create } from "zustand";
@@ -408,3 +410,188 @@ export const immer: Immer = (createState) => (set, get, store) => {
   return createState(store.setState, get, store);
 };
 ```
+
+## 面試題
+
+### 基礎題（測試基本概念）
+
+1. Zustand 是什麼？它與 Redux 或 Context API 有什麼不同？
+   zustand 是一個輕量化的狀態庫，適用於 React 或者可以獨立應用於 JS，支援響應式狀態更新（Reactive State Updates 意即狀態更新後自動更新 UI）
+   - 與 redux 比較：
+     1. 更簡潔：省略了 redux 中的 reducer 和 action creators，降低了學習曲線和狀態模板。
+     2. 無需額外的套件：redux 需要額外使用 react-redux 與 react 整合。
+     3. 效能優化更簡單：redux 可能會因為 `useSelector` 產生不必要的 re-render（需要 useSelector + memoization），context api 也可能導致不必要的組件重新渲染（狀態變更時，所有消費者都會重新渲染），zustand 內建了 `selector` 和 `equalityFn`，可以精準控制組件渲染、提高效能。
+   - 與 context API 比較：
+     1. context 只適合小範圍的全局狀態：不適合頻繁的變更。
+     2. zustand 可以在 react 外部，存取狀態庫， context 只存在 react 組件內。
+2. Zustand 主要使用哪種設計模式來管理狀態？
+   1. Flux 架構：單一集中的 store，使用同樣的架構還有 redux，但他需要依賴 reducer 變更。
+   2. 訂閱發佈模式(Pub-Sub)：`selector` 和 `equalityFn` 搭配 `useSyncExternalStoreWithSelector` 實現訂閱局部的狀態，當發生改變時，只有真正受影響的組件會重新渲染。Redux 的 subscribe() 類似，但 Redux 需要手動優化（如 useSelector + memoization）
+   3. 使用 FP，工廠模式創建 store。（待補充）
+3. 如何在 React 中創建一個最基本的 Zustand store？請提供範例。
+
+   ```ts
+   import { create } from "zustand";
+   // 確保 useBearStore 只創建一次，而不會在每次使用時重新初始化 store
+   export function useBearStore() {
+     return create((set) => ({
+       bears: 0,
+       increase: (by = 1) =>
+         set((state) => ({
+           bears: state.bears + by,
+         })),
+     }));
+   }
+   ```
+
+   ```ts
+   import React from "react";
+   import useBearStore from "./useBearStore";
+
+   function BearCounter() {
+     const { bears, increaseBears, decreaseBears } = useBearStore();
+
+     return (
+       <div>
+         <h1>🐻 Bear count: {bears}</h1>
+         <button onClick={increaseBears}>增加 🐻</button>
+         <button onClick={decreaseBears}>減少 🐻</button>
+       </div>
+     );
+   }
+
+   export default BearCounter;
+   ```
+
+4. Zustand 如何讓 state 的更新觸發 re-render？與 React 的 useState 行為有何不同？
+   zustand 使用了 `useSyncExternalStoreWithSelector` 來管理狀態的訂閱和更新。這個 hook 是基於 react v18 新增的 hook api `useSyncExternalStore` 進一步封裝 `selector` `equalityFn`，如果發生狀態改變，所有訂閱該 store 的組件都會收到通知，再比較 `selector` 結果是否有變化。底層再通過 subscribe 通知 react 組件，只有真正影響到的組件才會觸發更新。
+   | 特性 | zustand | useState |
+   |----|----|----|
+   | 狀態存放位置 | 全局（可跨組件存取) | 當前組件內部 |
+   | 更新機制 | 訂閱機制，使用 useSyncExternalStoreWithSelector，只有 selector 結果變更時才 re-render | 每次 setState() 都會觸發當前組件重新渲染(如果是基本類型，不變則不會) |
+   | 避免不必要的重新渲染 | 內建 `selector` + `equalityFn` 進行優化 | 手動使用 useMemo 或 useCallback 來避免不必要的 re-render
+5. Zustand 的 store 需要使用 React 的 useContext 來提供狀態嗎？為什麼？
+   不用，因為他的狀態是存在於內存之中，所以可以跨組件存取，store 只是訂閱了 react 當中的更新，最底層是使用 react v18 新增的 hook api useSyncExternalStore 進一步封裝。所以也不用在組件頂層使用 `<Provider>`。
+
+### 中級題（測試應用與內部運作）
+
+1. Zustand 的 set 函數是如何運作的？它與 Redux 的 dispatch 有什麼不同？
+   Zustand 的 set 函數可以局部更新，或是取代更新。
+   會先執行邏輯後，比較新舊值，如果有變更，觸發 `useSyncExternalStore` 的 `subscribe`，通知 React 更新 UI。
+   ```ts
+   const useStore = create((set) => ({
+     count: 0,
+     increment: () => set((state) => ({ count: state.count + 1 })), // 局部更新
+     reset: () => set({ count: 0 }), // 局部更新
+     addToTen: () => set({ count: 10 }, true), // 直接取代
+   }));
+   ```
+   redux 一定要透過 dispatch action 去更改 store，reducer 計算新的狀態！永遠是 immutable，只能取代更新。
+2. 如何在 Zustand store 中處理異步請求（如 API 呼叫）？請舉例說明。
+   不像 redux 需要額外的中間件，set 本身不是異步的，當中不可以直接 `await`
+
+   ```tsx
+   import { create } from "zustand";
+
+   // 假設這是一個 API 請求函數
+   const fetchDataFromAPI = async () => {
+     const res = await fetch("https://jsonplaceholder.typicode.com/posts");
+     if (!res.ok) throw new Error("Failed to fetch data");
+     return res.json();
+   };
+
+   // Zustand Store
+   const useStore = create((set) => ({
+     data: [],
+     loading: false,
+     error: null,
+
+     fetchData: async () => {
+       set({ loading: true, error: null }); // 設定 loading 狀態
+       try {
+         const data = await fetchDataFromAPI();
+         set({ data, loading: false });
+       } catch (err) {
+         set({ error: err.message, loading: false });
+       }
+     },
+   }));
+
+   // React Component
+   function DataComponent() {
+     const { data, loading, error, fetchData } = useStore();
+
+     return (
+       <div>
+         <button onClick={fetchData}>獲取數據</button>
+         {loading && <p>載入中...</p>}
+         {error && <p style={{ color: "red" }}>{error}</p>}
+         <ul>
+           {data.map((item) => (
+             <li key={item.id}>{item.title}</li>
+           ))}
+         </ul>
+       </div>
+     );
+   }
+   ```
+
+3. Zustand 是否支援 middleware？有哪些內建的 middleware 可以使用？
+   是，比方說 devtools, persist, immer 都是
+
+   ```ts
+   import { create } from "zustand";
+   import { devtools, persist, immer } from "zustand/middleware";
+
+   const useStore = create(
+     devtools(
+       // 可在 Redux DevTools 查看 Zustand 的狀態變化
+       persist(
+         // 自動將 state 存儲到 localStorage / sessionStorage，可保持跨頁面刷新狀態，不會丟失資料
+         immer((set) => ({
+           // 讓狀態更新更簡潔
+           count: 0,
+           increment: () =>
+             set((state) => {
+               state.count += 1;
+             }),
+         })),
+         {
+           name: "persisted-counter", // 本地存儲的 key
+           getStorage: () => localStorage, // 默認是 localStorage，可改為 sessionStorage
+         }
+       )
+     )
+   );
+   useStore.subscribe((state) => console.log("State changed:", state));
+   ```
+
+4. 如何在 Zustand 中使用 subscribe 來監聽 store 的變化？
+   只有 equalityFn(prev, next) 回傳 false，subscribe 才會觸發。
+
+   ```ts
+   import shallow from "zustand/shallow";
+   const useStore = create((set) => ({
+     count: 0,
+     increment: () =>
+       set((state) => {
+         state.count += 1;
+       }),
+   }));
+   // 監聽整個 store
+   useStore.subscribe((state) => console.log("State changed:", state));
+   const unsubscribe = useStore.subscribe(
+     (state) => state.count, // 只監聽 `count` 這個屬性
+     (count) => {
+       console.log("Count changed:", count);
+     },
+     { equalityFn: (a, b) => a === b } // 只有當 count 實際改變時才執行
+     // { equalityFn: shallow } // 只比較第一層 key-value 是否相同
+   );
+   ```
+
+5. 什麼是 Zustand 的 devtools？如何在應用程式中啟用它？
+   devtools 是一個中間件，可以將變化記錄到 redux-devtools。讓開發者在 chrome 的開發者工具中檢視。
+   - 可視化狀態變化
+   - 支援回朔狀態
+   - 不需要 redux
