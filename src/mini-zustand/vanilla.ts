@@ -1,5 +1,5 @@
 type SetStateInternal<T> = (
-  partial: T | Partial<T> | ((state: T) => T | Partial<T>),
+  partial: T | Partial<T> | ((state: T) => T | Partial<T>) | void,
   replace?: boolean | undefined
 ) => void;
 

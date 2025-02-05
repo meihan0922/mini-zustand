@@ -376,3 +376,35 @@ const bears = useBearStore(
   } // 第二個參數，用來判斷 selector 取得的狀態是否有改變
 );
 ```
+
+### middlewares
+
+和 redux 一樣，可以插入中間件。
+這邊舉例: 插入 immer，直接修改狀態。
+
+如同 redux，之所以可以使用中間件，是改變了 `store.dispatch`， zustand 要改變的是 `store.setState`。
+
+> src/mini-zustand/middleware/immer.ts
+
+```ts
+import { StateCreator } from "../vanilla";
+import { produce } from "immer";
+type Immer = <T>(createState: StateCreator<T>) => StateCreator<T>;
+
+export const immer: Immer = (createState) => (set, get, store) => {
+  type T = ReturnType<typeof createState>;
+
+  // src/mini-zustand/vanilla.ts 得到 set get store
+  // const initialState = (state = createState(setState, getState, api));
+  // 改變 zustand/vanilla 定義的 setState
+  store.setState = (partial, replace, ...p) => {
+    const nextState = (
+      typeof partial === "function"
+        ? produce(partial as any) // 沒有執行 partial(state) 只是再包一層
+        : partial
+    ) as (state: T) => T | Partial<T> | T;
+    return set(nextState, replace, ...p);
+  };
+  return createState(store.setState, get, store);
+};
+```

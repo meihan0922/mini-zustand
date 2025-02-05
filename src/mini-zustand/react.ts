@@ -1,12 +1,14 @@
-import { StateCreator, StoreApi } from "zustand";
+import { StoreApi, create as zustandCreate } from "zustand";
 import { createStore } from "./vanilla";
 import useSyncExternalStoreExports from "use-sync-external-store/shim/with-selector";
 const { useSyncExternalStoreWithSelector } = useSyncExternalStoreExports;
 
-type Create = {
-  <T>(createState: StateCreator<T>): UseBoundStore<StoreApi<T>>;
-  <T>(): (createState: StateCreator<T>) => UseBoundStore<StoreApi<T>>;
-};
+type CreateType = ReturnType<typeof zustandCreate>;
+
+// type Create = {
+//   <T>(createState: StateCreator<T>): UseBoundStore<StoreApi<T>>;
+//   <T>(): (createState: StateCreator<T>) => UseBoundStore<StoreApi<T>>;
+// };
 
 // infer 能從類型結構中推導出部分類型信息，在實現泛型工具類型（如提取函數返回類型、提取 Promise 結果類型等）時非常有用。
 // 這裡的 infer T 的作用是從 S 的結構中提取出 getState 方法返回的類型，並將其賦值給 T
@@ -34,11 +36,11 @@ export type UseBoundStore<S extends WithReact<ReadonlyStoreApi<unknown>>> = {
 // 這樣，UseBoundStore 不僅是一個函數，它還擁有 S 的所有屬性。
 // 例如，S 本身可能包含一些方法（如 getState、setState 等），這些方法會被直接附加到 UseBoundStore 上。
 
-export const create = function <T>(createState: StateCreator<T>) {
+export const create = function (createState) {
   return createState ? createImpl(createState) : createImpl;
-} as Create;
+} as CreateType;
 
-function createImpl<T>(createState: StateCreator<T>) {
+function createImpl(createState) {
   const api =
     typeof createState === "function" ? createStore(createState) : createState;
 
