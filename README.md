@@ -548,6 +548,7 @@ export const immer: Immer = (createState) => (set, get, store) => {
        // 可在 Redux DevTools 查看 Zustand 的狀態變化
        persist(
          // 自動將 state 存儲到 localStorage / sessionStorage，可保持跨頁面刷新狀態，不會丟失資料
+         // 頁面刷新後，狀態仍然保留！
          immer((set) => ({
            // 讓狀態更新更簡潔
            count: 0,
@@ -595,3 +596,149 @@ export const immer: Immer = (createState) => (set, get, store) => {
    - 可視化狀態變化
    - 支援回朔狀態
    - 不需要 redux
+
+### 進階題（測試最佳實踐與進階用法）
+
+1. Zustand 的 store 是如何做到 tree-shaking 友好的？這對效能有何影響？
+   tree-shaking 是用來移除未使用的程式碼（讓程式碼 不要在 import 時就執行，而是在應用啟動時才執行，這樣 Webpack/Rollup 才能安全地刪除未使用的程式碼。）減少打包大小，提升載入速度，降低執行時的記憶體佔用。
+   主要適用於 ESM (ES modules)，如果某函數變數沒有使用就不會被打包進去。如果程式碼是動態載入，tree-shaking 會失效。
+   先來看看 redux
+
+   ```ts
+   import { createStore } from "redux";
+
+   const reducer = (state = { count: 0 }, action) => {
+     switch (action.type) {
+       case "INCREMENT":
+         return { count: state.count + 1 };
+       default:
+         return state;
+     }
+   };
+
+   const store = createStore(reducer); // 全域單例物件
+   export default store;
+   ```
+
+   打包時，在第一個引用 store 的地方，會帶著全部的 reducer 執行產生全域單例物件 store，後續引用都指向此物件。因為 webpack 等打包工具，並不能確定這個物件，也因為是在打包時執行，有可能會產生副作用：
+
+   - 維護內部的 state
+   - 註冊 subscribe() 監聽
+   - 影響全局狀態（例如 Middleware、Reducers）
+
+   所以沒辦法 tree-shaking。不管有沒有使用。
+
+   zustand 本質上是一個函式，他透過 create 來動態的建立 store，打包的當下也只是一個函式，儘管已經建立了 store，但這個 store 會被 useStore 包裝成一個 React hook，而不是直接變成一個全局物件。
+   後續執行時，才會被 React 觸發並訂閱變化。因此在打包時，可以檢測是否程式碼當中有需要此函式。
+
+   ```ts
+   // redux
+   import { createStore } from "redux"; // import 就建立了全局物件，即時沒有用到也不會被移除
+   const store = createStore(reducer);
+
+   // zustand
+   import { create } from "zustand";
+   // 動態建立的，
+   // 沒有 import store 的組件，不會載入 store
+   // 沒有使用的 store 也可以被移除
+   const useStore = create((set) => ({
+     count: 0,
+     increment: () => set((state) => ({ count: state.count + 1 })),
+   }));
+   ```
+
+   且沒有 Provider，減少不必要的依賴。
+   Zustand 支援「切片模式」（Slices），未使用的 store 可以被 tree-shaking。
+   Redux 會載入所有 reducer，但 Zustand 只載入需要的 store。
+
+2. 如何在 Zustand 中使用 persist 來實現持久化？有哪些常見的問題？
+
+   ```ts
+   import { create } from "zustand";
+   import { devtools, persist, immer } from "zustand/middleware";
+
+   const useStore = create(
+     persist(
+       // 自動將 state 存儲到 localStorage / sessionStorage，可保持跨頁面刷新狀態，不會丟失資料
+       // 頁面刷新後，狀態仍然保留！
+       (set) => ({
+         count: 0,
+         increment: () =>
+           set((state) => ({
+             count: state.count + 1,
+           })),
+       }),
+       {
+         name: "persisted-counter", // 本地存儲的 key，
+         getStorage: () => localStorage, // 默認是 localStorage，可改為 sessionStorage
+       }
+     )
+   );
+   ```
+
+   常見問題：
+
+   - SSR 時，沒有 window，`getStorage: () => typeof window !== "undefined" ? localStorage : undefined, // 確保 SSR 不會出錯`
+   - 初始值 undefined（頁面載入時狀態不對）：persist 需要一點時間從 localStorage 讀取數據，導致 state 在載入時是 undefined。使用 onRehydrateStorage 設定預設值。
+   - 存入過大數據影響效能：只存取部分數據。
+
+3. 🌟🌟🌟 當 Zustand store 變得很大時，如何優化其效能？請舉例說明。
+   過大時，會導致渲染性能下降、不必要的 re-render、存儲負擔過大
+
+   1. 拆分 store，減少不必要的渲染 （module-based state management）：
+      1. 拆分成多個獨立的 store（Multiple Stores），減少不必要的狀態變更監聽（僅限於耦合性低的狀態們）
+      2. 使用 slice 切片模式（單一 store + 多個 Slice）：分類同一個 store 內的狀態，結構清晰，維護方便。
+   2. 使用 subscribe 避免不必要的 re-render：
+      使用 useStore 組件就會直接訂閱並與渲染掛勾，如果並不需要改變 UI，可以用 subscribe 監聽變化
+
+      ```ts
+      // 監聽變化，而不是讓組件 re-render
+      const unsubscribe = useStore.subscribe(
+        (state) => state.count,
+        (count) => {
+          console.log("Count changed:", count);
+        }
+      );
+      ```
+
+   3. 使用 `selector` 避免整個 store 變更導致 re-render
+   4. 使用 `equalityFn` 防止相同狀態更新導致的 re-render
+      Zustand 預設使用 Object.is 來判斷 state 是否變更，如果是複雜物件，可能會導致不必要的 re-render：
+
+      ```ts
+      const useStore = create((set) => ({
+        user: { name: "Alice", age: 25 },
+        updateUser: (user) => set({ user }),
+      }));
+
+      // 預設 re-render（即使 name 沒變，age 變了，還是會 re-render）
+      const userName = useStore((state) => state.user.name);
+
+      // 改進：只有當 name 真正改變時才 re-render
+      const userNameOptimized = useStore(
+        (state) => state.user.name,
+        (a, b) => a === b
+      );
+      ```
+
+   5. 如果有使用到 `persist`，需要限制儲存範圍，避免儲存過大影響載入速度
+   6. 使用 shallow 比對（適用於陣列或物件）
+      如果 store 裡的狀態是陣列或物件，直接比較引用可能導致不必要的 re-render：
+
+      ```ts
+      import { shallow } from "zustand/shallow";
+
+      const useStore = create((set) => ({
+        items: ["apple", "banana"],
+      }));
+
+      // shallow 比對，只有 items 陣列內容變更時才 re-render
+      const items = useStore((state) => state.items, shallow);
+      ```
+
+4. 如何在 Zustand 中使用 `selector` ？為什麼使用 `selector` 可能比直接訪問 state 更有效率？
+   每個組件只會重新渲染當前訂閱的 state 變化，如果直接使用 `useStore()`，組件會訂閱整個 store，但如果使用 `selector` ，就能只訂閱特定的 state，從而提高效能。(如果是物件，會再加上 shallow 比較物件)
+   Zustand 使用 `useSyncExternalStoreWithSelector` ，這個 API 會：
+
+   1. 執行 selector 取得狀態的子集
+   2. 比較前後 selector 結果是否相同，是否要觸發渲染
