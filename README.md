@@ -1,3 +1,18 @@
+- [mini-zustand](#mini-zustand)
+  - [基本使用](#基本使用)
+    - [基本使用 - react](#基本使用---react)
+    - [基本使用 - vanilla](#基本使用---vanilla)
+    - [Slice Pattern](#slice-pattern)
+  - [實現](#實現)
+    - [vanilla - createStore](#vanilla---createstore)
+    - [react - 實現 create](#react---實現-create)
+      - [selector 與 equalityFn](#selector-與-equalityfn)
+    - [middlewares](#middlewares)
+  - [面試題](#面試題)
+    - [基礎題（測試基本概念）](#基礎題測試基本概念)
+    - [中級題（測試應用與內部運作）](#中級題測試應用與內部運作)
+    - [進階題（測試最佳實踐與進階用法）](#進階題測試最佳實踐與進階用法)
+
 # mini-zustand
 
 - zustand 是狀態管理庫，是可以排除 react 單獨使用的。
@@ -416,7 +431,9 @@ export const immer: Immer = (createState) => (set, get, store) => {
 ### 基礎題（測試基本概念）
 
 1. Zustand 是什麼？它與 Redux 或 Context API 有什麼不同？
-   zustand 是一個輕量化的狀態庫，適用於 React 或者可以獨立應用於 JS，支援響應式狀態更新（Reactive State Updates 意即狀態更新後自動更新 UI）
+
+   zustand 是一個輕量化的狀態庫，適用於 React ，或者可以獨立應用於 JS，支援響應式狀態更新（Reactive State Updates 意即狀態更新後自動更新 UI）
+
    - 與 redux 比較：
      1. 更簡潔：省略了 redux 中的 reducer 和 action creators，降低了學習曲線和狀態模板。
      2. 無需額外的套件：redux 需要額外使用 react-redux 與 react 整合。
@@ -424,6 +441,7 @@ export const immer: Immer = (createState) => (set, get, store) => {
    - 與 context API 比較：
      1. context 只適合小範圍的全局狀態：不適合頻繁的變更。
      2. zustand 可以在 react 外部，存取狀態庫， context 只存在 react 組件內。
+
 2. Zustand 主要使用哪種設計模式來管理狀態？
    1. Flux 架構：單一集中的 store，使用同樣的架構還有 redux，但他需要依賴 reducer 變更。
    2. 訂閱發佈模式(Pub-Sub)：`selector` 和 `equalityFn` 搭配 `useSyncExternalStoreWithSelector` 實現訂閱局部的狀態，當發生改變時，只有真正受影響的組件會重新渲染。Redux 的 subscribe() 類似，但 Redux 需要手動優化（如 useSelector + memoization）
@@ -464,20 +482,24 @@ export const immer: Immer = (createState) => (set, get, store) => {
    ```
 
 4. Zustand 如何讓 state 的更新觸發 re-render？與 React 的 useState 行為有何不同？
+
    zustand 使用了 `useSyncExternalStoreWithSelector` 來管理狀態的訂閱和更新。這個 hook 是基於 react v18 新增的 hook api `useSyncExternalStore` 進一步封裝 `selector` `equalityFn`，如果發生狀態改變，所有訂閱該 store 的組件都會收到通知，再比較 `selector` 結果是否有變化。底層再通過 subscribe 通知 react 組件，只有真正影響到的組件才會觸發更新。
    | 特性 | zustand | useState |
    |----|----|----|
    | 狀態存放位置 | 全局（可跨組件存取) | 當前組件內部 |
-   | 更新機制 | 訂閱機制，使用 useSyncExternalStoreWithSelector，只有 selector 結果變更時才 re-render | 每次 setState() 都會觸發當前組件重新渲染(如果是基本類型，不變則不會) |
+   | 更新機制 | 訂閱機制，使用 `useSyncExternalStoreWithSelector` ，只有 selector 結果變更時才 re-render | 每次 `setState()` 都會觸發當前組件重新渲染(如果是基本類型，不變則不會) |
    | 避免不必要的重新渲染 | 內建 `selector` + `equalityFn` 進行優化 | 手動使用 useMemo 或 useCallback 來避免不必要的 re-render
+
 5. Zustand 的 store 需要使用 React 的 useContext 來提供狀態嗎？為什麼？
-   不用，因為他的狀態是存在於內存之中，所以可以跨組件存取，store 只是訂閱了 react 當中的更新，最底層是使用 react v18 新增的 hook api useSyncExternalStore 進一步封裝。所以也不用在組件頂層使用 `<Provider>`。
+
+   不用，因為他的狀態是存在於內存之中，所以可以跨組件存取，store 只是訂閱了 react 當中的更新，最底層是使用 react v18 新增的 hook api `useSyncExternalStore` 進一步封裝。所以也不用在組件頂層使用 `<Provider>`。
 
 ### 中級題（測試應用與內部運作）
 
 1. Zustand 的 set 函數是如何運作的？它與 Redux 的 dispatch 有什麼不同？
    Zustand 的 set 函數可以局部更新，或是取代更新。
    會先執行邏輯後，比較新舊值，如果有變更，觸發 `useSyncExternalStore` 的 `subscribe`，通知 React 更新 UI。
+
    ```ts
    const useStore = create((set) => ({
      count: 0,
@@ -486,8 +508,11 @@ export const immer: Immer = (createState) => (set, get, store) => {
      addToTen: () => set({ count: 10 }, true), // 直接取代
    }));
    ```
+
    redux 一定要透過 dispatch action 去更改 store，reducer 計算新的狀態！永遠是 immutable，只能取代更新。
+
 2. 如何在 Zustand store 中處理異步請求（如 API 呼叫）？請舉例說明。
+
    不像 redux 需要額外的中間件，set 本身不是異步的，當中不可以直接 `await`
 
    ```tsx
@@ -537,6 +562,7 @@ export const immer: Immer = (createState) => (set, get, store) => {
    ```
 
 3. Zustand 是否支援 middleware？有哪些內建的 middleware 可以使用？
+
    是，比方說 devtools, persist, immer 都是
 
    ```ts
@@ -568,6 +594,7 @@ export const immer: Immer = (createState) => (set, get, store) => {
    ```
 
 4. 如何在 Zustand 中使用 subscribe 來監聽 store 的變化？
+
    只有 equalityFn(prev, next) 回傳 false，subscribe 才會觸發。
 
    ```ts
@@ -592,7 +619,9 @@ export const immer: Immer = (createState) => (set, get, store) => {
    ```
 
 5. 什麼是 Zustand 的 devtools？如何在應用程式中啟用它？
+
    devtools 是一個中間件，可以將變化記錄到 redux-devtools。讓開發者在 chrome 的開發者工具中檢視。
+
    - 可視化狀態變化
    - 支援回朔狀態
    - 不需要 redux
@@ -600,6 +629,7 @@ export const immer: Immer = (createState) => (set, get, store) => {
 ### 進階題（測試最佳實踐與進階用法）
 
 1. Zustand 的 store 是如何做到 tree-shaking 友好的？這對效能有何影響？
+
    tree-shaking 是用來移除未使用的程式碼（讓程式碼 不要在 import 時就執行，而是在應用啟動時才執行，這樣 Webpack/Rollup 才能安全地刪除未使用的程式碼。）減少打包大小，提升載入速度，降低執行時的記憶體佔用。
    主要適用於 ESM (ES modules)，如果某函數變數沒有使用就不會被打包進去。如果程式碼是動態載入，tree-shaking 會失效。
    先來看看 redux
@@ -737,6 +767,7 @@ export const immer: Immer = (createState) => (set, get, store) => {
       ```
 
 4. 如何在 Zustand 中使用 `selector` ？為什麼使用 `selector` 可能比直接訪問 state 更有效率？
+
    每個組件只會重新渲染當前訂閱的 state 變化，如果直接使用 `useStore()`，組件會訂閱整個 store，但如果使用 `selector` ，就能只訂閱特定的 state，從而提高效能。(如果是物件，會再加上 shallow 比較物件)
    Zustand 使用 `useSyncExternalStoreWithSelector` ，這個 API 會：
 
